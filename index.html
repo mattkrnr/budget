@@ -57,7 +57,7 @@
 </head>
 <body>
 <main>
-  <header><h1>Budget</h1><button id="signout" class="ghost hidden">Sign out</button></header>
+  <header><h1><a id="home-link" href="/" class="hidden" style="color:inherit; text-decoration:none; margin-right:6px" aria-label="All apps">←</a>Budget</h1><button id="signout" class="ghost hidden">Sign out</button></header>
 
   <section id="auth" class="card hidden">
     <button id="google" style="width:100%; margin-bottom:12px">Continue with Google</button>
@@ -157,6 +157,9 @@
 const SUPABASE_URL = 'https://lvaxrikegqknfkzrvmbr.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_A_Mn1IHTHj8uV_e2ut0LXw_wGg8qfsA';
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// Back arrow to the apps homepage when opened from it
+if (new URLSearchParams(location.search).get('from') === 'home') document.getElementById('home-link').classList.remove('hidden');
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
