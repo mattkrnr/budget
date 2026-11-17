@@ -1,0 +1,19 @@
+# Pings both free Supabase projects once a day so neither pauses for inactivity.
+# Add this file to any one repo. No secrets needed: publishable keys are already public in the apps.
+name: Supabase keep-alive
+on:
+  schedule:
+    - cron: "17 11 * * *"   # daily, ~6am Eastern
+  workflow_dispatch:
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Private project (Journal, Budget)
+        run: |
+          curl -fsS "https://lvaxrikegqknfkzrvmbr.supabase.co/rest/v1/journal_entries?select=id&limit=1" \
+            -H "apikey: sb_publishable_A_Mn1IHTHj8uV_e2ut0LXw_wGg8qfsA"
+      - name: Shared project (Wheel of Whimsy, Flashcards)
+        run: |
+          curl -fsS "https://bkhhcsmbpnlgsnbzblov.supabase.co/rest/v1/flashcards_decks?select=id&limit=1" \
+            -H "apikey: sb_publishable_JdJa4qMmvvrD96M3fDvbQA_WGQSvzfu"

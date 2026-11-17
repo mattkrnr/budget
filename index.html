@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Budget">
+<meta name="theme-color" content="#f5f7f6">
+<title>Budget</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root { --bg:#f5f7f6; --card:#fff; --ink:#18201c; --muted:#6b756f; --line:#e0e6e2; --accent:#1f6f50; --accent-soft:#e1f0e8; --over:#c0392b; --over-soft:#fbe4e1; --warn:#c98a1b; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  main { max-width:720px; margin:0 auto; padding:calc(16px + env(safe-area-inset-top)) 16px 48px; }
+  header { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
+  h1 { font-size:26px; margin:0; letter-spacing:-.02em; }
+  h2 { font-size:18px; margin:0 0 10px; }
+  .muted { color:var(--muted); font-size:14px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:16px; margin-bottom:12px; }
+  input, select { font:inherit; color:inherit; background:#fff; border:1px solid var(--line); border-radius:10px; padding:9px 11px; }
+  button { font:inherit; border:0; border-radius:10px; padding:9px 15px; background:var(--accent); color:#fff; cursor:pointer; }
+  button.ghost { background:transparent; color:var(--accent); padding:6px 8px; }
+  button.light { background:var(--accent-soft); color:var(--accent); }
+  button.danger { color:var(--over); }
+  button:disabled { opacity:.5; }
+  .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .grow { flex:1; min-width:0; }
+  nav { display:flex; gap:4px; background:var(--card); border:1px solid var(--line); border-radius:12px; padding:4px; margin-bottom:14px; }
+  nav button { flex:1; background:transparent; color:var(--muted); padding:8px 4px; font-size:15px; }
+  nav button.on { background:var(--accent-soft); color:var(--accent); font-weight:600; }
+  .totals { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-bottom:12px; }
+  .total { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:10px; text-align:center; }
+  .total b { display:block; font-size:20px; }
+  .cat { padding:10px 0; border-bottom:1px solid var(--line); }
+  .cat:last-child { border-bottom:0; }
+  .cat-head { display:flex; justify-content:space-between; gap:8px; font-size:15px; }
+  .bar { height:8px; background:var(--bg); border-radius:8px; overflow:hidden; margin-top:6px; }
+  .bar div { height:100%; background:var(--accent); border-radius:8px; }
+  .bar.over div { background:var(--over); }
+  .over-text { color:var(--over); font-weight:600; }
+  .txn { display:flex; gap:10px; align-items:center; padding:9px 0; border-bottom:1px solid var(--line); font-size:15px; }
+  .txn:last-child { border-bottom:0; }
+  .txn .desc { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .txn select { max-width:130px; padding:5px 6px; font-size:14px; }
+  .amt { font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .amt.pos { color:var(--accent); }
+  .uncat { background:var(--over-soft); }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:5px 6px; border-bottom:1px solid var(--line); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:220px; }
+  .banks { display:flex; flex-wrap:wrap; gap:8px; }
+  .listrow { display:flex; gap:8px; align-items:center; padding:6px 0; border-bottom:1px solid var(--line); }
+  .listrow:last-child { border-bottom:0; }
+  .hidden { display:none !important; }
+  .toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); background:var(--ink); color:#fff; padding:8px 16px; border-radius:999px; font-size:14px; z-index:9; }
+</style>
+</head>
+<body>
+<main>
+  <header><h1>Budget</h1><button id="signout" class="ghost hidden">Sign out</button></header>
+
+  <section id="auth" class="card hidden">
+    <button id="google" style="width:100%; margin-bottom:12px">Continue with Google</button>
+    <p class="muted" style="margin:0 0 8px">Or sign in with an email code:</p>
+    <div class="row"><input id="email" class="grow" type="email" placeholder="you@email.com" autocomplete="email"><button id="send">Send code</button></div>
+    <div id="step-code" class="row hidden" style="margin-top:10px"><input id="code" class="grow" inputmode="numeric" placeholder="6-digit code" autocomplete="one-time-code"><button id="verify">Sign in</button></div>
+    <p id="auth-msg" class="muted"></p>
+  </section>
+
+  <section id="app" class="hidden">
+    <nav id="tabs">
+      <button data-tab="overview" class="on">Overview</button>
+      <button data-tab="import">Import</button>
+      <button data-tab="txns">Transactions</button>
+      <button data-tab="settings">Plan</button>
+    </nav>
+
+    <!-- Overview -->
+    <div id="tab-overview">
+      <div class="row" style="margin-bottom:12px"><input id="month" type="month"><span class="muted grow" id="uncat-note"></span></div>
+      <div class="totals">
+        <div class="total"><b id="t-planned">$0</b><span class="muted">planned</span></div>
+        <div class="total"><b id="t-spent">$0</b><span class="muted">spent</span></div>
+        <div class="total"><b id="t-left">$0</b><span class="muted" id="t-left-label">left</span></div>
+      </div>
+      <div class="card" id="cats"></div>
+    </div>
+
+    <!-- Import -->
+    <div id="tab-import" class="hidden">
+      <div class="card">
+        <h2>1. Download from your bank</h2>
+        <div class="banks" id="bank-buttons"></div>
+        <p class="muted" style="margin-bottom:0" id="no-banks">Add your banks' export pages under <b>Plan</b> so they show up here.</p>
+      </div>
+      <div class="card">
+        <h2>2. Drop in the CSV</h2>
+        <div class="row">
+          <input id="account" class="grow" list="account-list" placeholder="Account name (e.g. Chase Sapphire)">
+          <datalist id="account-list"></datalist>
+        </div>
+        <input id="file" type="file" accept=".csv,text/csv" style="margin-top:10px; width:100%">
+      </div>
+      <div class="card hidden" id="preview">
+        <h2>3. Check and import</h2>
+        <div class="row" style="font-size:14px; margin-bottom:8px">
+          <label>Date <select id="map-date"></select></label>
+          <label>Description <select id="map-desc"></select></label>
+          <label>Amount <select id="map-amount"></select></label>
+          <label>Debit <select id="map-debit"></select></label>
+          <label>Credit <select id="map-credit"></select></label>
+        </div>
+        <label class="row" style="font-size:14px"><input type="checkbox" id="flip" style="width:auto"> Flip signs (spending should show as negative)</label>
+        <div style="overflow-x:auto; margin:10px 0"><table id="preview-table"></table></div>
+        <div class="row"><span class="muted grow" id="preview-summary"></span><button id="do-import">Import</button></div>
+      </div>
+    </div>
+
+    <!-- Transactions -->
+    <div id="tab-txns" class="hidden">
+      <div class="row" style="margin-bottom:12px">
+        <input id="tx-month" type="month">
+        <select id="tx-filter" class="grow"></select>
+      </div>
+      <input id="tx-search" placeholder="Search" style="width:100%; margin-bottom:12px">
+      <div class="card" id="txn-list"></div>
+    </div>
+
+    <!-- Plan / settings -->
+    <div id="tab-settings" class="hidden">
+      <div class="card">
+        <h2>Monthly plan</h2>
+        <p class="muted" style="margin-top:0">Leave blank for no plan. "Ignore" is for transfers, card payments and income.</p>
+        <div id="plan-list"></div>
+        <div class="row" style="margin-top:10px"><input id="new-cat" class="grow" placeholder="New category"><button id="add-cat" class="light">Add</button></div>
+      </div>
+      <div class="card">
+        <h2>Bank export links</h2>
+        <p class="muted" style="margin-top:0">Paste the page where each bank lets you download transactions.</p>
+        <div id="bank-list"></div>
+        <div class="row" style="margin-top:10px">
+          <input id="bank-name" placeholder="Name" style="width:130px">
+          <input id="bank-url" class="grow" placeholder="https://…">
+          <button id="add-bank" class="light">Add</button>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Auto-categorize rules</h2>
+        <p class="muted" style="margin-top:0">If a description contains the text, it gets that category. Add rules from the Transactions tab.</p>
+        <div id="rule-list"></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+const SUPABASE_URL = 'https://lvaxrikegqknfkzrvmbr.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_A_Mn1IHTHj8uV_e2ut0LXw_wGg8qfsA';
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const money = (n, cents) => (n < 0 ? '-' : '') + '$' + Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: cents ? 2 : 0, maximumFractionDigits: cents ? 2 : 0 });
+const thisMonth = () => new Date().toLocaleDateString('en-CA').slice(0, 7);
+const toast = msg => { const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.append(t); setTimeout(() => t.remove(), 2600); };
+
+// Starting categories and plan (edit any time under Plan)
+const DEFAULT_CATS = [
+  ['Mortgage', 3000], ['Roof', 500], ['WiFi', 70], ['Utilities', null], ['Food', null], ['Commute', null],
+  ['Car', null], ['Genny', null], ['Subscriptions', null], ['Gym', null], ['Gifts', null], ['Misc', null], ['Ignore', null],
+];
+
+// Starting bank links. Both sites hide the export behind sign-in, so these open the sign-in page.
+// After signing in, copy the address of the actual transactions page and update it under Plan.
+const DEFAULT_BANKS = [
+  ['SoFi', 'https://www.sofi.com/login/'],                        // Banking → transactions → Export (web only, not the app)
+  ['Capital One (Discover)', 'https://verified.capitalone.com/auth/signin'],  // Card → transactions → Download Transactions → CSV
+];
+// Rules every card user needs: card payments show up in both accounts, so ignore them.
+const DEFAULT_RULES = [
+  ['payment thank you', 'Ignore'], ['capital one', 'Ignore'], ['discover', 'Ignore'],
+];
+
+let cats = [], rules = [], banks = [], txns = [], started = false;
+
+// ───────── Auth ─────────
+$('send').onclick = async () => {
+  const email = $('email').value.trim(); if (!email) return;
+  $('send').disabled = true;
+  const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.href.split('#')[0] } });
+  $('send').disabled = false;
+  if (error) return $('auth-msg').textContent = error.message;
+  $('step-code').classList.remove('hidden');
+  $('auth-msg').textContent = 'Check your email for the code (or tap the link in it).';
+};
+$('verify').onclick = async () => {
+  const { error } = await sb.auth.verifyOtp({ email: $('email').value.trim(), token: $('code').value.trim(), type: 'email' });
+  if (error) $('auth-msg').textContent = error.message;
+};
+$('signout').onclick = () => sb.auth.signOut();
+$('google').onclick = () => sb.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: location.href.split('#')[0] } });
+sb.auth.onAuthStateChange((_e, session) => {
+  $('auth').classList.toggle('hidden', !!session);
+  $('app').classList.toggle('hidden', !session);
+  $('signout').classList.toggle('hidden', !session);
+  if (session && !started) { started = true; setTimeout(init, 0); }
+  if (!session) started = false;
+});
+sb.auth.getSession().then(({ data }) => { if (!data.session) $('auth').classList.remove('hidden'); });
+
+// ───────── Tabs ─────────
+$('tabs').querySelectorAll('button').forEach(b => b.onclick = () => showTab(b.dataset.tab));
+function showTab(tab) {
+  $('tabs').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
+  for (const t of ['overview','import','txns','settings']) $('tab-' + t).classList.toggle('hidden', t !== tab);
+  ({ overview: renderOverview, import: renderImport, txns: renderTxns, settings: renderSettings })[tab]();
+}
+
+// ───────── Data ─────────
+async function init() {
+  $('month').value = thisMonth(); $('tx-month').value = thisMonth();
+  await loadSetup();
+  if (!cats.length) {
+    const { error } = await sb.from('budget_categories').insert(DEFAULT_CATS.map(([name, planned], i) => ({ name, planned, sort: i })));
+    if (error) toast(error.message);
+    // First run only: seed the banks and payment rules too
+    await sb.from('budget_bank_links').insert(DEFAULT_BANKS.map(([name, export_url], i) => ({ name, export_url, sort: i })));
+    await sb.from('budget_rules').upsert(DEFAULT_RULES.map(([pattern, category]) => ({ pattern, category })), { onConflict: 'user_id,pattern', ignoreDuplicates: true });
+    await loadSetup();
+  }
+  await loadTxns(); showTab('overview');
+}
+async function loadSetup() {
+  const [c, r, b] = await Promise.all([
+    sb.from('budget_categories').select('*').order('sort'),
+    sb.from('budget_rules').select('*').order('created_at'),
+    sb.from('budget_bank_links').select('*').order('sort'),
+  ]);
+  cats = c.data || []; rules = r.data || []; banks = b.data || [];
+}
+async function loadTxns() {
+  // Pull everything in pages of 1000 (PostgREST default cap)
+  let all = [], from = 0;
+  while (true) {
+    const { data, error } = await sb.from('budget_transactions').select('*').order('txn_date', { ascending: false }).range(from, from + 999);
+    if (error) { toast(error.message); break; }
+    all = all.concat(data); if (data.length < 1000) break; from += 1000;
+  }
+  txns = all;
+}
+const catNames = () => cats.map(c => c.name);
+function categorize(desc) {
+  const d = desc.toLowerCase();
+  const hit = rules.filter(r => d.includes(r.pattern.toLowerCase())).sort((a, b) => b.pattern.length - a.pattern.length)[0];
+  return hit ? hit.category : null;
+}
+
+// ───────── Overview ─────────
+$('month').onchange = renderOverview;
+function renderOverview() {
+  const m = $('month').value || thisMonth();
+  const monthTx = txns.filter(t => t.txn_date.startsWith(m));
+  const spent = {}; let uncat = 0, uncatAmt = 0;
+  for (const t of monthTx) {
+    if (!t.category) { uncat++; uncatAmt += -t.amount; continue; }
+    spent[t.category] = (spent[t.category] || 0) + -t.amount;   // spending is negative, so flip
+  }
+  let totPlanned = 0, totSpent = 0;
+  const rows = cats.filter(c => c.name !== 'Ignore').map(c => {
+    const s = Math.round((spent[c.name] || 0) * 100) / 100, p = c.planned == null ? null : +c.planned;
+    totSpent += s; if (p != null) totPlanned += p;
+    return { name: c.name, s, p };
+  });
+  // Categories found in transactions that aren't in the plan anymore
+  for (const name of Object.keys(spent)) if (name !== 'Ignore' && !cats.some(c => c.name === name)) { rows.push({ name, s: spent[name], p: null }); totSpent += spent[name]; }
+  totSpent += uncatAmt;
+
+  $('t-planned').textContent = money(totPlanned);
+  $('t-spent').textContent = money(totSpent);
+  const left = totPlanned - totSpent;
+  $('t-left').textContent = money(Math.abs(left)); $('t-left').className = left < 0 ? 'over-text' : '';
+  $('t-left-label').textContent = left < 0 ? 'over' : 'left';
+  $('uncat-note').innerHTML = uncat ? `<a href="#" id="go-uncat">${uncat} uncategorized (${money(uncatAmt, true)})</a>` : (monthTx.length ? 'All sorted ✓' : '');
+  if (uncat) $('go-uncat').onclick = e => { e.preventDefault(); $('tx-month').value = m; $('tx-filter').value = '__none'; showTab('txns'); };
+
+  if (!monthTx.length) { $('cats').innerHTML = `<p class="muted" style="margin:0">No transactions for this month yet. Head to <b>Import</b>.</p>`; return; }
+  $('cats').innerHTML = rows.sort((a, b) => (b.p ?? 0) - (a.p ?? 0) || b.s - a.s).map(r => {
+    const over = r.p != null && r.s > r.p, pct = r.p ? Math.min(100, r.s / r.p * 100) : 0;
+    return `<div class="cat">
+      <div class="cat-head"><b>${esc(r.name)}</b><span class="amt ${over ? 'over-text' : ''}">${money(r.s)}${r.p != null ? ` <span class="muted">/ ${money(r.p)}</span>` : ''}</span></div>
+      ${r.p != null ? `<div class="bar ${over ? 'over' : ''}"><div style="width:${pct}%"></div></div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+// ───────── Import ─────────
+let parsed = null;   // { headers, rows }
+function renderImport() {
+  $('bank-buttons').innerHTML = banks.map(b => `<a href="${esc(b.export_url)}" target="_blank" rel="noopener"><button class="light">${esc(b.name)} ↗</button></a>`).join('');
+  $('no-banks').classList.toggle('hidden', banks.length > 0);
+  const accounts = [...new Set([...banks.map(b => b.name), ...txns.map(t => t.account).filter(Boolean)])];
+  $('account-list').innerHTML = accounts.map(a => `<option value="${esc(a)}">`).join('');
+}
+
+function parseCSV(text) {
+  const rows = []; let row = [], field = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (q) {
+      if (ch === '"' && text[i + 1] === '"') { field += '"'; i++; }
+      else if (ch === '"') q = false;
+      else field += ch;
+    } else if (ch === '"') q = true;
+    else if (ch === ',') { row.push(field); field = ''; }
+    else if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && text[i + 1] === '\n') i++;
+      row.push(field); field = '';
+      if (row.some(f => f.trim() !== '')) rows.push(row);
+      row = [];
+    } else field += ch;
+  }
+  row.push(field); if (row.some(f => f.trim() !== '')) rows.push(row);
+  return rows;
+}
+function parseDate(s) {
+  s = (s || '').trim(); let m;
+  if ((m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/))) return `${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`;
+  if ((m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/))) { const y = m[3].length === 2 ? '20' + m[3] : m[3]; return `${y}-${m[1].padStart(2,'0')}-${m[2].padStart(2,'0')}`; }
+  const d = new Date(s); return isNaN(d) ? null : d.toLocaleDateString('en-CA');
+}
+function parseAmount(s) {
+  s = (s || '').trim(); if (!s) return null;
+  const neg = /^\(.*\)$/.test(s) || s.includes('-');
+  const n = parseFloat(s.replace(/[^0-9.]/g, ''));
+  return isNaN(n) ? null : (neg ? -n : n);
+}
+function guessColumns(headers) {
+  const h = headers.map(x => x.toLowerCase().trim());
+  const find = (...res) => { for (const re of res) { const i = h.findIndex(x => re.test(x)); if (i >= 0) return i; } return -1; };
+  return {
+    date: find(/^trans.*date|^date$/, /posting date|post date|posted/, /date/),
+    desc: find(/^description$|^desc/, /payee|merchant|^name$/, /description|memo|details/),
+    amount: find(/^amount$/, /amount/),
+    debit: find(/debit|withdrawal/),
+    credit: find(/credit|deposit/),
+  };
+}
+
+$('file').onchange = async () => {
+  const f = $('file').files[0]; if (!f) return;
+  const rows = parseCSV(await f.text());
+  // Some banks put a few lines of junk above the header; find the first row that looks like one
+  let hi = rows.findIndex(r => r.some(c => /date/i.test(c)) && r.some(c => /amount|debit|credit/i.test(c)));
+  if (hi < 0) hi = 0;
+  parsed = { headers: rows[hi].map(s => s.trim()), rows: rows.slice(hi + 1) };
+  const g = guessColumns(parsed.headers);
+  const opts = (sel) => `<option value="-1">—</option>` + parsed.headers.map((h, i) => `<option value="${i}" ${i === sel ? 'selected' : ''}>${esc(h)}</option>`).join('');
+  $('map-date').innerHTML = opts(g.date); $('map-desc').innerHTML = opts(g.desc);
+  $('map-amount').innerHTML = opts(g.amount); $('map-debit').innerHTML = opts(g.amount >= 0 ? -1 : g.debit); $('map-credit').innerHTML = opts(g.amount >= 0 ? -1 : g.credit);
+  if (!$('account').value) $('account').value = f.name.replace(/\.csv$/i, '').replace(/[_-]+/g, ' ').slice(0, 40);
+  // Most rows on a card or checking statement are spending. If most amounts are positive, spending is positive here, so flip.
+  const pre = buildRows(false); const pos = pre.filter(r => r.amount > 0).length;
+  $('flip').checked = g.amount >= 0 && pos > pre.length / 2;
+  $('preview').classList.remove('hidden'); renderPreview();
+};
+['map-date','map-desc','map-amount','map-debit','map-credit','flip'].forEach(id => $(id).onchange = renderPreview);
+
+function buildRows(flip) {
+  const di = +$('map-date').value, de = +$('map-desc').value, ai = +$('map-amount').value, dbi = +$('map-debit').value, cri = +$('map-credit').value;
+  const out = [];
+  for (const r of parsed.rows) {
+    const date = parseDate(r[di]); const desc = (r[de] || '').trim().replace(/\s+/g, ' ');
+    let amount = null;
+    if (ai >= 0) amount = parseAmount(r[ai]);
+    else if (dbi >= 0 || cri >= 0) { const d = Math.abs(parseAmount(r[dbi]) || 0), c = Math.abs(parseAmount(r[cri]) || 0); amount = c - d; }
+    if (!date || !desc || amount == null) continue;
+    if (flip) amount = -amount;
+    out.push({ txn_date: date, description: desc, amount: Math.round(amount * 100) / 100 });
+  }
+  return out;
+}
+function renderPreview() {
+  const rows = buildRows($('flip').checked);
+  const spend = rows.filter(r => r.amount < 0).reduce((s, r) => s - r.amount, 0);
+  $('preview-summary').textContent = `${rows.length} transactions, ${money(spend, true)} spending`;
+  $('preview-table').innerHTML = `<tr><th>Date</th><th>Description</th><th>Amount</th><th>Category</th></tr>` +
+    rows.slice(0, 8).map(r => `<tr><td>${r.txn_date}</td><td>${esc(r.description)}</td><td class="amt ${r.amount > 0 ? 'pos' : ''}">${money(r.amount, true)}</td><td>${esc(categorize(r.description) || '—')}</td></tr>`).join('');
+}
+$('do-import').onclick = async () => {
+  const account = $('account').value.trim();
+  if (!account) return toast('Name the account first');
+  const rows = buildRows($('flip').checked); if (!rows.length) return toast('No rows to import');
+  const seen = {};
+  const payload = rows.map(r => {
+    const key = `${account}|${r.txn_date}|${r.description}|${r.amount}`;
+    seen[key] = (seen[key] || 0) + 1;                 // keeps two identical same-day charges apart
+    return { ...r, account, category: categorize(r.description), hash: `${key}|${seen[key]}` };
+  });
+  $('do-import').disabled = true;
+  const { data, error } = await sb.from('budget_transactions').upsert(payload, { onConflict: 'user_id,hash', ignoreDuplicates: true }).select('id');
+  $('do-import').disabled = false;
+  if (error) return toast(error.message);
+  const added = data ? data.length : 0;
+  toast(`Imported ${added} new${payload.length - added ? `, skipped ${payload.length - added} already in` : ''}`);
+  $('file').value = ''; $('preview').classList.add('hidden'); parsed = null;
+  await loadTxns(); showTab('overview');
+};
+
+// ───────── Transactions ─────────
+['tx-month','tx-filter'].forEach(id => $(id).onchange = renderTxnList);
+$('tx-search').oninput = renderTxnList;
+function renderTxns() {
+  const cur = $('tx-filter').value;
+  $('tx-filter').innerHTML = `<option value="">All categories</option><option value="__none">Uncategorized</option>` +
+    catNames().map(n => `<option>${esc(n)}</option>`).join('');
+  $('tx-filter').value = cur || '';
+  renderTxnList();
+}
+function renderTxnList() {
+  const m = $('tx-month').value, f = $('tx-filter').value, s = $('tx-search').value.trim().toLowerCase();
+  const list = txns.filter(t => (!m || t.txn_date.startsWith(m)) && (!f || (f === '__none' ? !t.category : t.category === f)) && (!s || t.description.toLowerCase().includes(s)));
+  const options = cat => `<option value="">—</option>` + catNames().map(n => `<option ${n === cat ? 'selected' : ''}>${esc(n)}</option>`).join('');
+  $('txn-list').innerHTML = list.length ? list.map(t => `
+    <div class="txn ${t.category ? '' : 'uncat'}">
+      <span class="muted" style="width:44px">${t.txn_date.slice(5).replace('-', '/')}</span>
+      <span class="desc" title="${esc(t.description)}">${esc(t.description)}<br><span class="muted">${esc(t.account)}</span></span>
+      <span class="amt ${t.amount > 0 ? 'pos' : ''}">${money(t.amount, true)}</span>
+      <select data-id="${t.id}">${options(t.category)}</select>
+      <button class="ghost" data-rule="${t.id}" title="Always use this category">+rule</button>
+    </div>`).join('') : '<p class="muted" style="margin:0">Nothing here.</p>';
+  $('txn-list').querySelectorAll('select').forEach(sel => sel.onchange = async () => {
+    const category = sel.value || null;
+    const { error } = await sb.from('budget_transactions').update({ category }).eq('id', sel.dataset.id);
+    if (error) return toast(error.message);
+    txns.find(t => t.id === sel.dataset.id).category = category;
+    sel.closest('.txn').classList.toggle('uncat', !category);
+  });
+  $('txn-list').querySelectorAll('[data-rule]').forEach(b => b.onclick = () => makeRule(txns.find(t => t.id === b.dataset.rule)));
+}
+async function makeRule(t) {
+  if (!t.category) return toast('Pick a category first');
+  // Suggest the merchant part: drop trailing store numbers, dates, and locations
+  const suggestion = t.description.replace(/[#*]\s*\d+.*$/, '').replace(/\s\d{3,}.*$/, '').trim().slice(0, 30);
+  const pattern = prompt(`Any description containing this text → ${t.category}`, suggestion);
+  if (!pattern || !pattern.trim()) return;
+  const { error } = await sb.from('budget_rules').upsert({ pattern: pattern.trim(), category: t.category }, { onConflict: 'user_id,pattern' });
+  if (error) return toast(error.message);
+  await loadSetup();
+  // Apply to existing uncategorized matches
+  const ids = txns.filter(x => !x.category && x.description.toLowerCase().includes(pattern.trim().toLowerCase())).map(x => x.id);
+  if (ids.length) {
+    const { error: e2 } = await sb.from('budget_transactions').update({ category: t.category }).in('id', ids);
+    if (e2) return toast(e2.message);
+    txns.forEach(x => { if (ids.includes(x.id)) x.category = t.category; });
+  }
+  toast(`Rule saved${ids.length ? `, sorted ${ids.length} more` : ''}`); renderTxnList();
+}
+
+// ───────── Plan / settings ─────────
+function renderSettings() {
+  $('plan-list').innerHTML = cats.map(c => `
+    <div class="listrow"><span class="grow">${esc(c.name)}</span>
+    <input type="number" inputmode="decimal" step="1" min="0" style="width:110px" placeholder="—" value="${c.planned ?? ''}" data-plan="${c.id}" ${c.name === 'Ignore' ? 'disabled' : ''}>
+    ${c.name === 'Ignore' ? '<span style="width:34px"></span>' : `<button class="ghost danger" data-delcat="${c.id}">✕</button>`}</div>`).join('');
+  $('plan-list').querySelectorAll('[data-plan]').forEach(inp => inp.onchange = async () => {
+    const planned = inp.value === '' ? null : +inp.value;
+    const { error } = await sb.from('budget_categories').update({ planned }).eq('id', inp.dataset.plan);
+    if (error) return toast(error.message);
+    cats.find(c => c.id === inp.dataset.plan).planned = planned; toast('Saved');
+  });
+  $('plan-list').querySelectorAll('[data-delcat]').forEach(b => b.onclick = async () => {
+    const c = cats.find(x => x.id === b.dataset.delcat);
+    if (!confirm(`Remove ${c.name}? Transactions keep their label.`)) return;
+    const { error } = await sb.from('budget_categories').delete().eq('id', c.id);
+    if (error) return toast(error.message);
+    cats = cats.filter(x => x.id !== c.id); renderSettings();
+  });
+  $('bank-list').innerHTML = banks.map(b => `<div class="listrow"><b style="width:130px">${esc(b.name)}</b><span class="grow muted" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${esc(b.export_url)}</span><button class="ghost danger" data-delbank="${b.id}">✕</button></div>`).join('') || '<p class="muted" style="margin:0">None yet.</p>';
+  $('bank-list').querySelectorAll('[data-delbank]').forEach(b => b.onclick = async () => {
+    const { error } = await sb.from('budget_bank_links').delete().eq('id', b.dataset.delbank);
+    if (error) return toast(error.message);
+    banks = banks.filter(x => x.id !== b.dataset.delbank); renderSettings();
+  });
+  $('rule-list').innerHTML = rules.map(r => `<div class="listrow"><span class="grow">"${esc(r.pattern)}" → <b>${esc(r.category)}</b></span><button class="ghost danger" data-delrule="${r.id}">✕</button></div>`).join('') || '<p class="muted" style="margin:0">None yet.</p>';
+  $('rule-list').querySelectorAll('[data-delrule]').forEach(b => b.onclick = async () => {
+    const { error } = await sb.from('budget_rules').delete().eq('id', b.dataset.delrule);
+    if (error) return toast(error.message);
+    rules = rules.filter(x => x.id !== b.dataset.delrule); renderSettings();
+  });
+}
+$('add-cat').onclick = async () => {
+  const name = $('new-cat').value.trim(); if (!name) return;
+  const sort = Math.max(0, ...cats.map(c => c.sort)) + 1;
+  const { data, error } = await sb.from('budget_categories').insert({ name, sort }).select().single();
+  if (error) return toast(error.message);
+  cats.push(data); $('new-cat').value = ''; renderSettings();
+};
+$('add-bank').onclick = async () => {
+  const name = $('bank-name').value.trim(); let url = $('bank-url').value.trim();
+  if (!name || !url) return toast('Name and link, please');
+  if (!/^https?:\/\//.test(url)) url = 'https://' + url;
+  const { data, error } = await sb.from('budget_bank_links').insert({ name, export_url: url, sort: banks.length }).select().single();
+  if (error) return toast(error.message);
+  banks.push(data); $('bank-name').value = ''; $('bank-url').value = ''; renderSettings();
+};
+</script>
+</body>
+</html>
