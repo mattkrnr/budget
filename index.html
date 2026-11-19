@@ -26,8 +26,9 @@
   button:disabled { opacity:.5; }
   .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
   .grow { flex:1; min-width:0; }
-  nav { display:flex; gap:4px; background:var(--card); border:1px solid var(--line); border-radius:12px; padding:4px; margin-bottom:14px; }
-  nav button { flex:1; background:transparent; color:var(--muted); padding:8px 4px; font-size:15px; }
+  nav { display:flex; gap:4px; background:var(--card); border:1px solid var(--line); border-radius:12px; padding:4px; margin-bottom:14px; overflow-x:auto; scrollbar-width:none; }
+  nav::-webkit-scrollbar { display:none; }
+  nav button { flex:1 0 auto; background:transparent; color:var(--muted); padding:8px 10px; font-size:15px; }
   nav button.on { background:var(--accent-soft); color:var(--accent); font-weight:600; }
   .totals { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-bottom:12px; }
   .total { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:10px; text-align:center; }
@@ -53,6 +54,39 @@
   .listrow:last-child { border-bottom:0; }
   .hidden { display:none !important; }
   .toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); background:var(--ink); color:#fff; padding:8px 16px; border-radius:999px; font-size:14px; z-index:9; }
+  /* Spending levels */
+  .lvl { display:inline-block; border-radius:999px; padding:1px 8px; font-size:12px; font-weight:600; white-space:nowrap; }
+  .lvl-bills { background:#e6ecf5; color:#35507a; } .lvl-pricier { background:#fbf0dc; color:#8a5a0c; } .lvl-fun { background:#f6e3ef; color:#8c2f6a; }
+  .levels { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-bottom:12px; }
+  .levels .total small { display:block; font-size:12px; }
+  .stack { display:flex; height:10px; border-radius:10px; overflow:hidden; margin-bottom:12px; background:var(--line); }
+  .stack div { height:100%; }
+  .s-bills { background:#6d8bbd; } .s-pricier { background:#e0a84a; } .s-fun { background:#c56aa6; }
+  .txn select.lvl-sel { max-width:96px; }
+  /* Trends */
+  .trend-wrap { overflow-x:auto; border:1px solid var(--line); border-radius:12px; background:var(--card); }
+  .trend { border-collapse:separate; border-spacing:0; font-size:13px; width:max-content; min-width:100%; }
+  .trend th, .trend td { padding:7px 9px; border-bottom:1px solid var(--line); text-align:right; max-width:none; font-variant-numeric:tabular-nums; }
+  .trend th:first-child, .trend td:first-child { position:sticky; left:0; background:var(--card); text-align:left; font-weight:600; z-index:1; }
+  .trend tr.sum td { font-weight:700; background:#fafbfa; }
+  .trend td.hi { background:var(--over-soft); color:var(--over); font-weight:600; }
+  .trend td.lo { background:var(--accent-soft); color:var(--accent); }
+  .trend td.typ { color:var(--muted); border-left:1px solid var(--line); }
+  .bars { display:flex; align-items:flex-end; gap:4px; height:90px; margin:6px 0 4px; }
+  .bars div { flex:1; background:var(--accent); border-radius:4px 4px 0 0; min-height:2px; position:relative; }
+  .bars div.hi { background:var(--over); } .bars div.lo { background:#7fb89e; }
+  .bar-labels { display:flex; gap:4px; font-size:11px; color:var(--muted); }
+  .bar-labels span { flex:1; text-align:center; overflow:hidden; }
+  .outlier { padding:8px 0; border-bottom:1px solid var(--line); font-size:15px; }
+  .outlier:last-child { border-bottom:0; }
+  .chips { display:flex; gap:6px; flex-wrap:wrap; }
+  .chips button { background:var(--card); color:var(--muted); border:1px solid var(--line); padding:6px 12px; }
+  .chips button.on { background:var(--accent-soft); color:var(--accent); border-color:var(--accent); font-weight:600; }
+  /* Subscriptions */
+  .sub { display:flex; gap:10px; align-items:center; padding:10px 0; border-bottom:1px solid var(--line); }
+  .sub:last-child { border-bottom:0; }
+  .sub .grow b { display:block; }
+  .changed { color:var(--warn); font-weight:600; }
 </style>
 </head>
 <body>
@@ -70,6 +104,8 @@
   <section id="app" class="hidden">
     <nav id="tabs">
       <button data-tab="overview" class="on">Overview</button>
+      <button data-tab="trends">Trends</button>
+      <button data-tab="subs">Recurring</button>
       <button data-tab="import">Import</button>
       <button data-tab="txns">Transactions</button>
       <button data-tab="settings">Plan</button>
@@ -83,7 +119,41 @@
         <div class="total"><b id="t-spent">$0</b><span class="muted">spent</span></div>
         <div class="total"><b id="t-left">$0</b><span class="muted" id="t-left-label">left</span></div>
       </div>
+      <div class="levels">
+        <div class="total"><span class="lvl lvl-bills">Bills</span><b id="l-bills">$0</b><small class="muted">must-pays</small></div>
+        <div class="total"><span class="lvl lvl-pricier">Pricier needs</span><b id="l-pricier">$0</b><small class="muted">could be cheaper</small></div>
+        <div class="total"><span class="lvl lvl-fun">Fun</span><b id="l-fun">$0</b><small class="muted">could skip</small></div>
+      </div>
+      <div class="stack" id="l-stack"></div>
       <div class="card" id="cats"></div>
+    </div>
+
+    <!-- Trends -->
+    <div id="tab-trends" class="hidden">
+      <div class="row" style="margin-bottom:12px; justify-content:space-between">
+        <div class="chips" id="range"><button data-n="6">6 mo</button><button data-n="12" class="on">12 mo</button><button data-n="24">24 mo</button><button data-n="0">All</button></div>
+        <select id="trend-by"><option value="cat">By category</option><option value="lvl">By level</option></select>
+      </div>
+      <div class="card">
+        <h2>Total spending</h2>
+        <div class="bars" id="t-bars"></div><div class="bar-labels" id="t-labels"></div>
+        <p class="muted" style="margin:6px 0 0">Red is well above your typical month, green is well below. "Typical" is the median of the months shown, so one odd month doesn't skew it.</p>
+      </div>
+      <div class="card"><h2>What stands out</h2><div id="outliers"></div></div>
+      <div class="trend-wrap"><table class="trend" id="trend-table"></table></div>
+      <p class="muted">Leaves out the current month until it's over, and anything in Ignore.</p>
+    </div>
+
+    <!-- Recurring / subscriptions -->
+    <div id="tab-subs" class="hidden">
+      <div class="totals">
+        <div class="total"><b id="s-count">0</b><span class="muted">recurring</span></div>
+        <div class="total"><b id="s-month">$0</b><span class="muted">per month</span></div>
+        <div class="total"><b id="s-year">$0</b><span class="muted">per year</span></div>
+      </div>
+      <div class="chips" style="margin-bottom:12px" id="sub-filter"><button data-f="cut" class="on">Could cut</button><button data-f="all">All recurring</button></div>
+      <div class="card" id="sub-list"></div>
+      <p class="muted">Found by looking for the same merchant charging about the same amount on a regular schedule. "Could cut" hides Bills.</p>
     </div>
 
     <!-- Import -->
@@ -130,7 +200,7 @@
     <div id="tab-settings" class="hidden">
       <div class="card">
         <h2>Monthly plan</h2>
-        <p class="muted" style="margin-top:0">Leave blank for no plan. "Ignore" is for transfers, card payments and income.</p>
+        <p class="muted" style="margin-top:0">Leave blank for no plan. "Ignore" is for transfers, card payments and income. The level is each category's default; you can change it on any single purchase in Transactions.</p>
         <div id="plan-list"></div>
         <div class="row" style="margin-top:10px"><input id="new-cat" class="grow" placeholder="New category"><button id="add-cat" class="light">Add</button></div>
       </div>
@@ -184,6 +254,13 @@ const DEFAULT_RULES = [
   ['payment thank you', 'Ignore'], ['capital one', 'Ignore'], ['discover', 'Ignore'],
 ];
 
+// Spending levels: each category has a default level; any single purchase can override it.
+const LEVELS = { bills: 'Bills', pricier: 'Pricier needs', fun: 'Fun' };
+const DEFAULT_LEVEL = {
+  Mortgage: 'bills', Roof: 'bills', WiFi: 'bills', Utilities: 'bills', Car: 'bills', Genny: 'bills', Gym: 'bills', Commute: 'bills',
+  Food: 'pricier', Subscriptions: 'fun', Gifts: 'fun', Misc: 'fun',
+};
+
 let cats = [], rules = [], banks = [], txns = [], started = false;
 
 // ───────── Auth ─────────
@@ -215,8 +292,8 @@ sb.auth.getSession().then(({ data }) => { if (!data.session) $('auth').classList
 $('tabs').querySelectorAll('button').forEach(b => b.onclick = () => showTab(b.dataset.tab));
 function showTab(tab) {
   $('tabs').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
-  for (const t of ['overview','import','txns','settings']) $('tab-' + t).classList.toggle('hidden', t !== tab);
-  ({ overview: renderOverview, import: renderImport, txns: renderTxns, settings: renderSettings })[tab]();
+  for (const t of ['overview','trends','subs','import','txns','settings']) $('tab-' + t).classList.toggle('hidden', t !== tab);
+  ({ overview: renderOverview, trends: renderTrends, subs: renderSubs, import: renderImport, txns: renderTxns, settings: renderSettings })[tab]();
 }
 
 // ───────── Data ─────────
@@ -224,7 +301,7 @@ async function init() {
   $('month').value = thisMonth(); $('tx-month').value = thisMonth();
   await loadSetup();
   if (!cats.length) {
-    const { error } = await sb.from('budget_categories').insert(DEFAULT_CATS.map(([name, planned], i) => ({ name, planned, sort: i })));
+    const { error } = await sb.from('budget_categories').insert(DEFAULT_CATS.map(([name, planned], i) => ({ name, planned, sort: i, level: DEFAULT_LEVEL[name] || null })));
     if (error) toast(error.message);
     // First run only: seed the banks and payment rules too
     await sb.from('budget_bank_links').insert(DEFAULT_BANKS.map(([name, export_url], i) => ({ name, export_url, sort: i })));
@@ -252,10 +329,23 @@ async function loadTxns() {
   txns = all;
 }
 const catNames = () => cats.map(c => c.name);
-function categorize(desc) {
+function ruleFor(desc) {
   const d = desc.toLowerCase();
-  const hit = rules.filter(r => d.includes(r.pattern.toLowerCase())).sort((a, b) => b.pattern.length - a.pattern.length)[0];
-  return hit ? hit.category : null;
+  return rules.filter(r => d.includes(r.pattern.toLowerCase())).sort((a, b) => b.pattern.length - a.pattern.length)[0] || null;
+}
+function categorize(desc) { const r = ruleFor(desc); return r ? r.category : null; }
+const catLevel = name => (cats.find(c => c.name === name) || {}).level || DEFAULT_LEVEL[name] || 'fun';
+const txnLevel = t => t.level || catLevel(t.category);
+const levelBadge = l => `<span class="lvl lvl-${l}">${LEVELS[l]}</span>`;
+// Spending we count: categorized or not, but never Ignore, and only money going out (refunds net it down)
+const counts = t => t.category !== 'Ignore';
+const median = a => { if (!a.length) return 0; const b = [...a].sort((x, y) => x - y), m = b.length >> 1; return b.length % 2 ? b[m] : (b[m - 1] + b[m]) / 2; };
+const monthLabel = (ym, long) => new Date(ym + '-15T12:00').toLocaleDateString(undefined, long ? { month: 'short', year: 'numeric' } : { month: 'short' });
+// Turn "SQ *BLUE BOTTLE #123 NEW YORK" into "blue bottle" so the same merchant groups together
+function merchantKey(desc) {
+  let d = desc.toLowerCase().replace(/^(sq|tst|pp|paypal|sp|py|dd|ic)\s?\*\s?/, '');
+  d = d.replace(/[*#].*$/, '').replace(/\d+/g, ' ').replace(/[^a-z& ]/g, ' ').replace(/\b(www|com|inc|llc|co|the)\b/g, ' ').replace(/\s+/g, ' ').trim();
+  return d.split(' ').slice(0, 3).join(' ') || desc.toLowerCase().slice(0, 20);
 }
 
 // ───────── Overview ─────────
@@ -286,6 +376,12 @@ function renderOverview() {
   $('uncat-note').innerHTML = uncat ? `<a href="#" id="go-uncat">${uncat} uncategorized (${money(uncatAmt, true)})</a>` : (monthTx.length ? 'All sorted ✓' : '');
   if (uncat) $('go-uncat').onclick = e => { e.preventDefault(); $('tx-month').value = m; $('tx-filter').value = '__none'; showTab('txns'); };
 
+  const lv = { bills: 0, pricier: 0, fun: 0 };
+  for (const t of monthTx) if (t.category && counts(t)) lv[txnLevel(t)] += -t.amount;
+  const lvTotal = Math.max(1, lv.bills + lv.pricier + lv.fun);
+  for (const k in lv) $('l-' + k).textContent = money(Math.max(0, lv[k]));
+  $('l-stack').innerHTML = Object.keys(lv).map(k => `<div class="s-${k}" style="width:${Math.max(0, lv[k]) / lvTotal * 100}%" title="${LEVELS[k]}"></div>`).join('');
+
   if (!monthTx.length) { $('cats').innerHTML = `<p class="muted" style="margin:0">No transactions for this month yet. Head to <b>Import</b>.</p>`; return; }
   $('cats').innerHTML = rows.sort((a, b) => (b.p ?? 0) - (a.p ?? 0) || b.s - a.s).map(r => {
     const over = r.p != null && r.s > r.p, pct = r.p ? Math.min(100, r.s / r.p * 100) : 0;
@@ -294,6 +390,132 @@ function renderOverview() {
       ${r.p != null ? `<div class="bar ${over ? 'over' : ''}"><div style="width:${pct}%"></div></div>` : ''}
     </div>`;
   }).join('');
+}
+
+// ───────── Trends ─────────
+let trendN = 12;
+$('range').querySelectorAll('button').forEach(b => b.onclick = () => {
+  trendN = +b.dataset.n; $('range').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); renderTrends();
+});
+$('trend-by').onchange = renderTrends;
+
+// Completed months only: the current month would always look low until it's over
+function trendMonths() {
+  const cur = thisMonth(), have = txns.map(t => t.txn_date.slice(0, 7)).filter(m => m < cur);
+  if (!have.length) return [];
+  const first = have.reduce((a, b) => a < b ? a : b), out = [];
+  const d = new Date(cur + '-15T12:00'); d.setMonth(d.getMonth() - 1);
+  while (true) {
+    const m = d.toLocaleDateString('en-CA').slice(0, 7);
+    if (m < first || (trendN && out.length >= trendN)) break;
+    out.unshift(m); d.setMonth(d.getMonth() - 1);
+  }
+  return out;
+}
+// "Well above/below typical": far enough in both percent and dollars that it's worth a look
+function flag(v, typ, isTotal) {
+  const pct = isTotal ? 0.2 : 0.4, min = isTotal ? 150 : 40;
+  if (v - typ > min && v > typ * (1 + pct)) return 'hi';
+  if (typ - v > min && v < typ * (1 - pct)) return 'lo';
+  return '';
+}
+function renderTrends() {
+  const months = trendMonths(), by = $('trend-by').value;
+  if (months.length < 3) {
+    $('t-bars').innerHTML = ''; $('t-labels').innerHTML = ''; $('trend-table').innerHTML = '';
+    $('outliers').innerHTML = `<p class="muted" style="margin:0">Import at least 3 full months to compare. Most banks let you download a year at a time.</p>`;
+    return;
+  }
+  const idx = Object.fromEntries(months.map((m, i) => [m, i]));
+  const rowsMap = {}, total = months.map(() => 0), merch = {};   // merch[row|month][merchant] = $
+  for (const t of txns) {
+    const i = idx[t.txn_date.slice(0, 7)]; if (i == null || !counts(t)) continue;
+    const key = by === 'lvl' ? (t.category ? LEVELS[txnLevel(t)] : 'Uncategorized') : (t.category || 'Uncategorized');
+    (rowsMap[key] ||= months.map(() => 0))[i] += -t.amount;
+    total[i] += -t.amount;
+    const mk = key + '|' + months[i], name = merchantKey(t.description);
+    (merch[mk] ||= {})[name] = (merch[mk][name] || 0) + -t.amount;
+  }
+  const order = by === 'lvl' ? Object.values(LEVELS).concat('Uncategorized') : catNames().concat('Uncategorized');
+  const rows = Object.entries(rowsMap).sort((a, b) => (order.indexOf(a[0]) + 1 || 99) - (order.indexOf(b[0]) + 1 || 99));
+
+  // Bar chart of totals
+  const typTotal = median(total), max = Math.max(...total, 1);
+  $('t-bars').innerHTML = total.map((v, i) => `<div class="${flag(v, typTotal, true)}" style="height:${Math.max(0, v) / max * 100}%" title="${monthLabel(months[i], true)}: ${money(v)}"></div>`).join('');
+  const every = Math.ceil(months.length / 12);
+  $('t-labels').innerHTML = months.map((m, i) => `<span>${i % every ? '' : monthLabel(m).slice(0, 3)}</span>`).join('');
+
+  // Table
+  const cell = (v, typ, isTotal) => `<td class="${flag(v, typ, isTotal)}">${money(v)}</td>`;
+  $('trend-table').innerHTML =
+    `<tr><th></th>${months.map(m => `<th>${monthLabel(m, months.length > 12 || m.endsWith('-01'))}</th>`).join('')}<th>Typical</th></tr>` +
+    rows.map(([name, vals]) => { const typ = median(vals); return `<tr><td>${esc(name)}</td>${vals.map(v => cell(v, typ)).join('')}<td class="typ">${money(typ)}</td></tr>`; }).join('') +
+    `<tr class="sum"><td>Total</td>${total.map(v => cell(v, typTotal, true)).join('')}<td class="typ">${money(typTotal)}</td></tr>`;
+  // Start scrolled to the most recent months
+  const wrap = $('trend-table').parentElement; wrap.scrollLeft = wrap.scrollWidth;
+
+  // Biggest outliers, with the merchants behind them
+  const found = [];
+  rows.forEach(([name, vals]) => { const typ = median(vals); vals.forEach((v, i) => { const f = flag(v, typ); if (f) found.push({ name, m: months[i], v, typ, f, diff: Math.abs(v - typ) }); }); });
+  found.sort((a, b) => b.diff - a.diff);
+  $('outliers').innerHTML = found.length ? found.slice(0, 8).map(o => {
+    const top = Object.entries(merch[o.name + '|' + o.m] || {}).sort((a, b) => b[1] - a[1]).slice(0, 3);
+    return `<div class="outlier"><b>${monthLabel(o.m, true)} · ${esc(o.name)}</b>
+      <span class="${o.f === 'hi' ? 'over-text' : ''}" style="float:right">${money(o.v)}</span>
+      <div class="muted">${o.f === 'hi' ? '+' : '−'}${money(o.diff)} vs typical ${money(o.typ)}${o.f === 'hi' && top.length ? ` · mostly ${top.map(([n, a]) => `${esc(n)} (${money(a)})`).join(', ')}` : ''}</div></div>`;
+  }).join('') : `<p class="muted" style="margin:0">Nothing unusual. Every month is close to typical.</p>`;
+}
+
+// ───────── Recurring / subscriptions ─────────
+let subFilter = 'cut';
+$('sub-filter').querySelectorAll('button').forEach(b => b.onclick = () => {
+  subFilter = b.dataset.f; $('sub-filter').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); renderSubs();
+});
+function findRecurring() {
+  const groups = {};
+  for (const t of txns) if (t.amount < 0 && counts(t)) (groups[merchantKey(t.description)] ||= []).push(t);
+  const today = new Date(), out = [];
+  for (const [key, list] of Object.entries(groups)) {
+    if (list.length < 2) continue;
+    list.sort((a, b) => a.txn_date.localeCompare(b.txn_date));
+    const days = list.map(t => new Date(t.txn_date + 'T12:00').getTime() / 864e5);
+    const gaps = days.slice(1).map((d, i) => d - days[i]).filter(g => g > 3);   // ignore same-week duplicates
+    if (!gaps.length) continue;
+    const gap = median(gaps);
+    const period = gap >= 26 && gap <= 35 && list.length >= 3 ? 'monthly'
+      : gap >= 350 && gap <= 380 ? 'yearly'
+      : gap >= 6 && gap <= 8 && list.length >= 4 ? 'weekly' : null;
+    if (!period) continue;
+    // Amounts should be steady (allowing the odd price change)
+    const amts = list.map(t => -t.amount), typ = median(amts);
+    if (amts.filter(a => Math.abs(a - typ) <= typ * 0.2 + 1).length / amts.length < 0.75) continue;
+    // Still active: last charge within about one period (plus slack)
+    const last = list[list.length - 1], since = (today - new Date(last.txn_date + 'T12:00')) / 864e5;
+    const per = { weekly: 7, monthly: 30.5, yearly: 365 }[period];
+    if (since > per * 1.5 + 7) continue;
+    const prev = list.length > 1 ? -list[list.length - 2].amount : null, lastAmt = -last.amount;
+    const monthly = period === 'monthly' ? lastAmt : period === 'yearly' ? lastAmt / 12 : lastAmt * 52 / 12;
+    const next = new Date(last.txn_date + 'T12:00'); next.setDate(next.getDate() + Math.round(per));
+    out.push({ key, name: last.description, category: last.category, level: txnLevel(last), period, lastAmt, prev, monthly,
+      last: last.txn_date, next: next.toLocaleDateString('en-CA'), count: list.length,
+      up: prev != null && lastAmt > prev * 1.03 + 0.5 });
+  }
+  return out.sort((a, b) => b.monthly - a.monthly);
+}
+function renderSubs() {
+  const all = findRecurring(), list = subFilter === 'cut' ? all.filter(s => s.level !== 'bills') : all;
+  const mo = list.reduce((a, s) => a + s.monthly, 0);
+  $('s-count').textContent = list.length; $('s-month').textContent = money(mo); $('s-year').textContent = money(mo * 12);
+  const short = d => new Date(d + 'T12:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  $('sub-list').innerHTML = list.length ? list.map(s => `
+    <div class="sub">
+      <div class="grow" style="min-width:0">
+        <b style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${esc(s.key.replace(/\b\w/g, c => c.toUpperCase()))}</b>
+        <span class="muted">${s.period} · last ${short(s.last)} · next ~${short(s.next)}${s.category ? ` · ${esc(s.category)}` : ''}</span>
+        ${s.up ? `<div class="changed">Price went up from ${money(s.prev, true)}</div>` : ''}
+      </div>
+      <div style="text-align:right">${levelBadge(s.level)}<div class="amt">${money(s.lastAmt, true)}</div>${s.period !== 'monthly' ? `<div class="muted">${money(s.monthly, true)}/mo</div>` : ''}</div>
+    </div>`).join('') : `<p class="muted" style="margin:0">${txns.length ? 'Nothing recurring found yet. It needs at least 3 months of history to spot a monthly charge.' : 'Import some transactions first.'}</p>`;
 }
 
 // ───────── Import ─────────
@@ -397,7 +619,8 @@ $('do-import').onclick = async () => {
   const payload = rows.map(r => {
     const key = `${account}|${r.txn_date}|${r.description}|${r.amount}`;
     seen[key] = (seen[key] || 0) + 1;                 // keeps two identical same-day charges apart
-    return { ...r, account, category: categorize(r.description), hash: `${key}|${seen[key]}` };
+    const rule = ruleFor(r.description);
+    return { ...r, account, category: rule ? rule.category : null, level: rule ? rule.level || null : null, hash: `${key}|${seen[key]}` };
   });
   $('do-import').disabled = true;
   const { data, error } = await sb.from('budget_transactions').upsert(payload, { onConflict: 'user_id,hash', ignoreDuplicates: true }).select('id');
@@ -423,20 +646,28 @@ function renderTxnList() {
   const m = $('tx-month').value, f = $('tx-filter').value, s = $('tx-search').value.trim().toLowerCase();
   const list = txns.filter(t => (!m || t.txn_date.startsWith(m)) && (!f || (f === '__none' ? !t.category : t.category === f)) && (!s || t.description.toLowerCase().includes(s)));
   const options = cat => `<option value="">—</option>` + catNames().map(n => `<option ${n === cat ? 'selected' : ''}>${esc(n)}</option>`).join('');
+  const lvlOptions = t => `<option value="">${LEVELS[catLevel(t.category)]} (default)</option>` + Object.entries(LEVELS).map(([k, v]) => `<option value="${k}" ${t.level === k ? 'selected' : ''}>${v}</option>`).join('');
   $('txn-list').innerHTML = list.length ? list.map(t => `
     <div class="txn ${t.category ? '' : 'uncat'}">
       <span class="muted" style="width:44px">${t.txn_date.slice(5).replace('-', '/')}</span>
       <span class="desc" title="${esc(t.description)}">${esc(t.description)}<br><span class="muted">${esc(t.account)}</span></span>
       <span class="amt ${t.amount > 0 ? 'pos' : ''}">${money(t.amount, true)}</span>
       <select data-id="${t.id}">${options(t.category)}</select>
+      ${t.category && t.category !== 'Ignore' ? `<select class="lvl-sel" data-lvl="${t.id}" title="Spending level">${lvlOptions(t)}</select>` : ''}
       <button class="ghost" data-rule="${t.id}" title="Always use this category">+rule</button>
     </div>`).join('') : '<p class="muted" style="margin:0">Nothing here.</p>';
-  $('txn-list').querySelectorAll('select').forEach(sel => sel.onchange = async () => {
+  $('txn-list').querySelectorAll('select[data-id]').forEach(sel => sel.onchange = async () => {
     const category = sel.value || null;
     const { error } = await sb.from('budget_transactions').update({ category }).eq('id', sel.dataset.id);
     if (error) return toast(error.message);
     txns.find(t => t.id === sel.dataset.id).category = category;
-    sel.closest('.txn').classList.toggle('uncat', !category);
+    renderTxnList();
+  });
+  $('txn-list').querySelectorAll('[data-lvl]').forEach(sel => sel.onchange = async () => {
+    const level = sel.value || null;
+    const { error } = await sb.from('budget_transactions').update({ level }).eq('id', sel.dataset.lvl);
+    if (error) return toast(error.message);
+    txns.find(t => t.id === sel.dataset.lvl).level = level;
   });
   $('txn-list').querySelectorAll('[data-rule]').forEach(b => b.onclick = () => makeRule(txns.find(t => t.id === b.dataset.rule)));
 }
@@ -444,17 +675,17 @@ async function makeRule(t) {
   if (!t.category) return toast('Pick a category first');
   // Suggest the merchant part: drop trailing store numbers, dates, and locations
   const suggestion = t.description.replace(/[#*]\s*\d+.*$/, '').replace(/\s\d{3,}.*$/, '').trim().slice(0, 30);
-  const pattern = prompt(`Any description containing this text → ${t.category}`, suggestion);
+  const pattern = prompt(`Any description containing this text → ${t.category}${t.level ? ` (${LEVELS[t.level]})` : ''}`, suggestion);
   if (!pattern || !pattern.trim()) return;
-  const { error } = await sb.from('budget_rules').upsert({ pattern: pattern.trim(), category: t.category }, { onConflict: 'user_id,pattern' });
+  const { error } = await sb.from('budget_rules').upsert({ pattern: pattern.trim(), category: t.category, level: t.level || null }, { onConflict: 'user_id,pattern' });
   if (error) return toast(error.message);
   await loadSetup();
   // Apply to existing uncategorized matches
   const ids = txns.filter(x => !x.category && x.description.toLowerCase().includes(pattern.trim().toLowerCase())).map(x => x.id);
   if (ids.length) {
-    const { error: e2 } = await sb.from('budget_transactions').update({ category: t.category }).in('id', ids);
+    const { error: e2 } = await sb.from('budget_transactions').update({ category: t.category, level: t.level || null }).in('id', ids);
     if (e2) return toast(e2.message);
-    txns.forEach(x => { if (ids.includes(x.id)) x.category = t.category; });
+    txns.forEach(x => { if (ids.includes(x.id)) { x.category = t.category; x.level = t.level || null; } });
   }
   toast(`Rule saved${ids.length ? `, sorted ${ids.length} more` : ''}`); renderTxnList();
 }
@@ -463,6 +694,7 @@ async function makeRule(t) {
 function renderSettings() {
   $('plan-list').innerHTML = cats.map(c => `
     <div class="listrow"><span class="grow">${esc(c.name)}</span>
+    ${c.name === 'Ignore' ? '' : `<select data-catlvl="${c.id}" style="padding:6px">${Object.entries(LEVELS).map(([k, v]) => `<option value="${k}" ${catLevel(c.name) === k ? 'selected' : ''}>${v}</option>`).join('')}</select>`}
     <input type="number" inputmode="decimal" step="1" min="0" style="width:110px" placeholder="—" value="${c.planned ?? ''}" data-plan="${c.id}" ${c.name === 'Ignore' ? 'disabled' : ''}>
     ${c.name === 'Ignore' ? '<span style="width:34px"></span>' : `<button class="ghost danger" data-delcat="${c.id}">✕</button>`}</div>`).join('');
   $('plan-list').querySelectorAll('[data-plan]').forEach(inp => inp.onchange = async () => {
@@ -470,6 +702,11 @@ function renderSettings() {
     const { error } = await sb.from('budget_categories').update({ planned }).eq('id', inp.dataset.plan);
     if (error) return toast(error.message);
     cats.find(c => c.id === inp.dataset.plan).planned = planned; toast('Saved');
+  });
+  $('plan-list').querySelectorAll('[data-catlvl]').forEach(sel => sel.onchange = async () => {
+    const { error } = await sb.from('budget_categories').update({ level: sel.value }).eq('id', sel.dataset.catlvl);
+    if (error) return toast(error.message);
+    cats.find(c => c.id === sel.dataset.catlvl).level = sel.value; toast('Saved');
   });
   $('plan-list').querySelectorAll('[data-delcat]').forEach(b => b.onclick = async () => {
     const c = cats.find(x => x.id === b.dataset.delcat);
@@ -484,7 +721,7 @@ function renderSettings() {
     if (error) return toast(error.message);
     banks = banks.filter(x => x.id !== b.dataset.delbank); renderSettings();
   });
-  $('rule-list').innerHTML = rules.map(r => `<div class="listrow"><span class="grow">"${esc(r.pattern)}" → <b>${esc(r.category)}</b></span><button class="ghost danger" data-delrule="${r.id}">✕</button></div>`).join('') || '<p class="muted" style="margin:0">None yet.</p>';
+  $('rule-list').innerHTML = rules.map(r => `<div class="listrow"><span class="grow">"${esc(r.pattern)}" → <b>${esc(r.category)}</b>${r.level ? ' ' + levelBadge(r.level) : ''}</span><button class="ghost danger" data-delrule="${r.id}">✕</button></div>`).join('') || '<p class="muted" style="margin:0">None yet.</p>';
   $('rule-list').querySelectorAll('[data-delrule]').forEach(b => b.onclick = async () => {
     const { error } = await sb.from('budget_rules').delete().eq('id', b.dataset.delrule);
     if (error) return toast(error.message);
@@ -494,7 +731,7 @@ function renderSettings() {
 $('add-cat').onclick = async () => {
   const name = $('new-cat').value.trim(); if (!name) return;
   const sort = Math.max(0, ...cats.map(c => c.sort)) + 1;
-  const { data, error } = await sb.from('budget_categories').insert({ name, sort }).select().single();
+  const { data, error } = await sb.from('budget_categories').insert({ name, sort, level: 'fun' }).select().single();
   if (error) return toast(error.message);
   cats.push(data); $('new-cat').value = ''; renderSettings();
 };
