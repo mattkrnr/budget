@@ -8,6 +8,7 @@
 <meta name="theme-color" content="#f5f7f6">
 <title>Budget</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
   :root { --bg:#f5f7f6; --card:#fff; --ink:#18201c; --muted:#6b756f; --line:#e0e6e2; --accent:#1f6f50; --accent-soft:#e1f0e8; --over:#c0392b; --over-soft:#fbe4e1; --warn:#c98a1b; }
   * { box-sizing:border-box; }
@@ -164,12 +165,13 @@
         <p class="muted" style="margin-bottom:0" id="no-banks">Add your banks' export pages under <b>Plan</b> so they show up here.</p>
       </div>
       <div class="card">
-        <h2>2. Drop in the CSV</h2>
+        <h2>2. Drop in the CSV or PDF statements</h2>
         <div class="row">
           <input id="account" class="grow" list="account-list" placeholder="Account name (e.g. Chase Sapphire)">
           <datalist id="account-list"></datalist>
         </div>
-        <input id="file" type="file" accept=".csv,text/csv" style="margin-top:10px; width:100%">
+        <input id="file" type="file" accept=".csv,text/csv,.pdf,application/pdf" multiple style="margin-top:10px; width:100%">
+        <p class="muted" style="margin:8px 0 0">PDF statements: pick as many as you like at once. SoFi and Discover statements are read automatically, including which account each line belongs to. Other banks' PDFs get a best-effort read, so check the preview.</p>
       </div>
       <div class="card hidden" id="preview">
         <h2>3. Check and import</h2>
@@ -571,8 +573,124 @@ function guessColumns(headers) {
   };
 }
 
+// ───────── PDF statements ─────────
+// Rebuild text lines from a PDF (pdf.js gives positioned text pieces), with wide gaps as 3 spaces between columns
+async function pdfLines(file) {
+  if (!window.pdfjsLib) throw new Error('PDF reader failed to load. Check your connection and reload.');
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  const pdf = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+  const lines = [];
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const tc = await (await pdf.getPage(p)).getTextContent();
+    const rows = [];
+    for (const it of tc.items) {
+      if (!it.str || !it.str.trim()) continue;
+      const x = it.transform[4], y = it.transform[5];
+      let row = rows.find(r => Math.abs(r.y - y) < 2.5);
+      if (!row) rows.push(row = { y, items: [] });
+      row.items.push({ x, w: it.width, s: it.str });
+    }
+    rows.sort((a, b) => b.y - a.y);
+    for (const r of rows) {
+      r.items.sort((a, b) => a.x - b.x);
+      let line = '', end = null;
+      for (const it of r.items) {
+        if (end != null) { const gap = it.x - end; line += gap > 8 ? '   ' : gap > 1 ? ' ' : ''; }
+        line += it.s; end = it.x + it.w;
+      }
+      lines.push(line.replace(/\s+$/, '').replace(/^\s+/, ''));
+    }
+  }
+  return lines;
+}
+const MONEY_RE = /-?\s?\$\s?-?[\d,]+\.\d{2}/g;
+const moneyNum = s => { const n = parseFloat(s.replace(/[^0-9.]/g, '')); return /-/.test(s) ? -n : n; };
+const firstCol = s => s.split(/\s{3,}/)[0].trim();
+
+function parseDiscover(lines) {
+  // Statement period gives the year for MM/DD dates
+  const per = lines.join(' ').match(/(\d{2})\/(\d{2})\/(\d{4})\s*-\s*(\d{2})\/(\d{2})\/(\d{4})/);
+  const close = per ? new Date(+per[6], +per[4] - 1, +per[5]) : new Date();
+  const out = [];
+  for (const line of lines) {
+    const m = line.match(/^(\d{2})\/(\d{2})\s+(.+?)\s+(-?\$[\d,]+\.\d{2})/);
+    if (!m) continue;
+    let y = close.getFullYear(); if (new Date(y, +m[1] - 1, +m[2]) > close) y--;
+    const desc = firstCol(m[3]).replace(/\s+(Restaurants|Travel\/Entertainment|Merchandise|Services|Gasoline|Supermarkets|Home Improvement|Department Stores|Warehouse Clubs|Drug Stores|Education|Medical Services|Government Services|Automotive|Payments and Credits)$/i, '');
+    const amt = -moneyNum(m[4]);          // Discover lists purchases as positive; spending is negative here
+    const cat = amt > 0 && /PAYMENT|CASHBACK BONUS REDEMPTION/i.test(desc) ? 'Ignore' : '';
+    out.push([`${y}-${m[1]}-${m[2]}`, desc, amt, 'Capital One (Discover)', cat]);
+  }
+  return out;
+}
+function parseSofi(lines) {
+  const out = [];
+  let account = 'SoFi';
+  const sections = [];   // rows per account section, newest first as printed
+  for (const line of lines) {
+    const h = line.match(/^(Checking|Savings) Account - (\d{4})$/);
+    if (h) { account = `SoFi ${h[1]}`; continue; }
+    const m = line.match(/^([A-Z][a-z]{2} \d{1,2}, \d{4})\s+(.+?)\s+(-?\$[\d,]+\.\d{2})\s+(-?\$[\d,]+\.\d{2})\s*$/);
+    if (!m) continue;
+    const parts = m[2].split(/\s{3,}/), type = parts.length > 1 ? parts[0].trim() : '', desc = (parts.length > 1 ? parts.slice(1).join(' ') : m[2]).trim();
+    let sec = sections[sections.length - 1];
+    if (!sec || sec.account !== account) sections.push(sec = { account, rows: [] });
+    sec.rows.push({ date: parseDate(m[1]), type, desc, amt: moneyNum(m[3]), bal: moneyNum(m[4]) });
+  }
+  for (const sec of sections) sec.rows.forEach((r, i) => {
+    // Work out the sign from the running balance (the next row down is the older one)
+    let a = Math.abs(r.amt);
+    const older = sec.rows[i + 1];
+    if (r.amt < 0) a = r.amt;
+    else if (older && Math.abs(older.bal - a - r.bal) < 0.01) a = -a;
+    else if (!older && /withdraw|debit|purchase|payment|fee|transfer to|outgoing/i.test(r.type + ' ' + r.desc)) a = -a;
+    // Money coming in (pay, interest, deposits) and moves between your own SoFi accounts aren't spending
+    const own = /transfer (to|from) (your )?(sofi )?(savings|checking|vault)/i.test(r.desc);
+    out.push([r.date, r.desc || r.type, a, sec.account, a > 0 || own ? 'Ignore' : '']);
+  });
+  return out;
+}
+function parseGenericPdf(lines) {
+  const out = [];
+  for (const line of lines) {
+    const m = line.match(/^((?:\d{1,2}\/\d{1,2}\/\d{2,4})|(?:\d{4}-\d{2}-\d{2})|(?:[A-Z][a-z]{2}\.? \d{1,2},? \d{4}))\s+(.+?)\s+(-?\$?\s?-?[\d,]+\.\d{2})(?:\s|$)/);
+    if (!m) continue;
+    const d = parseDate(m[1].replace('.', '')); if (!d) continue;
+    out.push([d, firstCol(m[2]), moneyNum(m[3]), '', '']);
+  }
+  return out;
+}
+async function readPdfs(files) {
+  const rows = [], kinds = new Set();
+  for (const f of files) {
+    const lines = await pdfLines(f), text = lines.join('\n');
+    if (/SoFi Bank/i.test(text)) { rows.push(...parseSofi(lines)); kinds.add('SoFi'); }
+    else if (/DISCOVER (IT|CARD)|Discover\.com/i.test(text) && /OPEN TO CLOSE DATE/i.test(text)) { rows.push(...parseDiscover(lines)); kinds.add('Discover'); }
+    else { rows.push(...parseGenericPdf(lines)); kinds.add('other'); }
+  }
+  return { rows, kinds };
+}
+
 $('file').onchange = async () => {
-  const f = $('file').files[0]; if (!f) return;
+  const files = [...$('file').files]; if (!files.length) return;
+  const pdfs = files.filter(f => /\.pdf$/i.test(f.name) || f.type === 'application/pdf');
+  if (pdfs.length) {
+    try {
+      toast(`Reading ${pdfs.length} PDF${pdfs.length > 1 ? 's' : ''}…`);
+      const { rows, kinds } = await readPdfs(pdfs);
+      if (!rows.length) return toast("Couldn't find any transactions in that PDF");
+      parsed = { headers: ['Date', 'Description', 'Amount', 'Account', 'Category'], rows, pdf: true };
+      const opts = sel => `<option value="-1">—</option>` + parsed.headers.slice(0, 3).map((h, i) => `<option value="${i}" ${i === sel ? 'selected' : ''}>${h}</option>`).join('');
+      $('map-date').innerHTML = opts(0); $('map-desc').innerHTML = opts(1); $('map-amount').innerHTML = opts(2);
+      $('map-debit').innerHTML = opts(-1); $('map-credit').innerHTML = opts(-1);
+      // Known banks are already signed correctly; for anything else guess like a CSV
+      const pre = buildRows(false);
+      $('flip').checked = kinds.has('other') && pre.filter(r => r.amount > 0).length > pre.length / 2;
+      $('preview').classList.remove('hidden'); renderPreview();
+    } catch (e) { toast(e.message || 'Could not read PDF'); }
+    return;
+  }
+  const f = files[0];
   const rows = parseCSV(await f.text());
   // Some banks put a few lines of junk above the header; find the first row that looks like one
   let hi = rows.findIndex(r => r.some(c => /date/i.test(c)) && r.some(c => /amount|debit|credit/i.test(c)));
@@ -594,13 +712,16 @@ function buildRows(flip) {
   const di = +$('map-date').value, de = +$('map-desc').value, ai = +$('map-amount').value, dbi = +$('map-debit').value, cri = +$('map-credit').value;
   const out = [];
   for (const r of parsed.rows) {
-    const date = parseDate(r[di]); const desc = (r[de] || '').trim().replace(/\s+/g, ' ');
+    const date = parsed.pdf ? r[0] : parseDate(r[di]); const desc = (r[de] || '').trim().replace(/\s+/g, ' ');
     let amount = null;
-    if (ai >= 0) amount = parseAmount(r[ai]);
+    if (parsed.pdf) amount = r[2];
+    else if (ai >= 0) amount = parseAmount(r[ai]);
     else if (dbi >= 0 || cri >= 0) { const d = Math.abs(parseAmount(r[dbi]) || 0), c = Math.abs(parseAmount(r[cri]) || 0); amount = c - d; }
     if (!date || !desc || amount == null) continue;
     if (flip) amount = -amount;
-    out.push({ txn_date: date, description: desc, amount: Math.round(amount * 100) / 100 });
+    const row = { txn_date: date, description: desc, amount: Math.round(amount * 100) / 100 };
+    if (parsed.pdf) { row.account = r[3] || ''; row.category = r[4] || ''; }
+    out.push(row);
   }
   return out;
 }
@@ -608,19 +729,22 @@ function renderPreview() {
   const rows = buildRows($('flip').checked);
   const spend = rows.filter(r => r.amount < 0).reduce((s, r) => s - r.amount, 0);
   $('preview-summary').textContent = `${rows.length} transactions, ${money(spend, true)} spending`;
-  $('preview-table').innerHTML = `<tr><th>Date</th><th>Description</th><th>Amount</th><th>Category</th></tr>` +
-    rows.slice(0, 8).map(r => `<tr><td>${r.txn_date}</td><td>${esc(r.description)}</td><td class="amt ${r.amount > 0 ? 'pos' : ''}">${money(r.amount, true)}</td><td>${esc(categorize(r.description) || '—')}</td></tr>`).join('');
+  const accts = [...new Set(rows.map(r => r.account).filter(Boolean))];
+  if (accts.length) $('preview-summary').textContent += ` · ${accts.join(', ')}`;
+  $('preview-table').innerHTML = `<tr><th>Date</th><th>Description</th><th>Amount</th><th>Category</th>${accts.length ? '<th>Account</th>' : ''}</tr>` +
+    rows.slice(0, 12).map(r => `<tr><td>${r.txn_date}</td><td>${esc(r.description)}</td><td class="amt ${r.amount > 0 ? 'pos' : ''}">${money(r.amount, true)}</td><td>${esc(r.category || categorize(r.description) || '—')}</td>${accts.length ? `<td>${esc(r.account || '')}</td>` : ''}</tr>`).join('');
 }
 $('do-import').onclick = async () => {
-  const account = $('account').value.trim();
-  if (!account) return toast('Name the account first');
+  const typed = $('account').value.trim();
   const rows = buildRows($('flip').checked); if (!rows.length) return toast('No rows to import');
+  if (!typed && rows.some(r => !r.account)) return toast('Name the account first');
   const seen = {};
-  const payload = rows.map(r => {
+  const payload = rows.map(({ account: rowAcct, category: hint, ...r }) => {
+    const account = rowAcct || typed;
     const key = `${account}|${r.txn_date}|${r.description}|${r.amount}`;
     seen[key] = (seen[key] || 0) + 1;                 // keeps two identical same-day charges apart
     const rule = ruleFor(r.description);
-    return { ...r, account, category: rule ? rule.category : null, level: rule ? rule.level || null : null, hash: `${key}|${seen[key]}` };
+    return { ...r, account, category: rule ? rule.category : hint || null, level: rule ? rule.level || null : null, hash: `${key}|${seen[key]}` };
   });
   $('do-import').disabled = true;
   const { data, error } = await sb.from('budget_transactions').upsert(payload, { onConflict: 'user_id,hash', ignoreDuplicates: true }).select('id');
