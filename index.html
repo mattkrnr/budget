@@ -613,7 +613,7 @@ function parseDiscover(lines) {
   const close = per ? new Date(+per[6], +per[4] - 1, +per[5]) : new Date();
   const out = [];
   for (const line of lines) {
-    const m = line.match(/^(\d{2})\/(\d{2})\s+(.+?)\s+(-?\$[\d,]+\.\d{2})/);
+    const m = line.match(/^(\d{2})\/(\d{2})\s+(.+?)\s+(-?\s?\$\s?[\d,]+\.\d{2})/);
     if (!m) continue;
     let y = close.getFullYear(); if (new Date(y, +m[1] - 1, +m[2]) > close) y--;
     const desc = firstCol(m[3]).replace(/\s+(Restaurants|Travel\/Entertainment|Merchandise|Services|Gasoline|Supermarkets|Home Improvement|Department Stores|Warehouse Clubs|Drug Stores|Education|Medical Services|Government Services|Automotive|Payments and Credits)$/i, '');
@@ -641,11 +641,14 @@ function parseSofi(lines) {
     // Work out the sign from the running balance (the next row down is the older one)
     let a = Math.abs(r.amt);
     const older = sec.rows[i + 1];
-    if (r.amt < 0) a = r.amt;
+    // The wording settles it when it can ("Payment from", "To Savings"); otherwise trust a printed minus,
+    // then the running balance (SoFi prints one balance per day, so this is the last resort)
+    if (/payment from|^from |deposit|interest earned|cashout|refund/i.test(r.desc + ' ' + r.type)) a = Math.abs(a);
+    else if (/payment to|^to |withdraw|debit card|purchase|fee|loan paymt|e-payment|web pay|check paid/i.test(r.desc + ' ' + r.type)) a = -a;
+    else if (r.amt < 0) a = r.amt;
     else if (older && Math.abs(older.bal - a - r.bal) < 0.01) a = -a;
-    else if (!older && /withdraw|debit|purchase|payment|fee|transfer to|outgoing/i.test(r.type + ' ' + r.desc)) a = -a;
     // Money coming in (pay, interest, deposits) and moves between your own SoFi accounts aren't spending
-    const own = /transfer (to|from) (your )?(sofi )?(savings|checking|vault)/i.test(r.desc);
+    const own = /^(to|from) (savings|checking|vault)\b|transfer (to|from) (your )?(sofi )?(savings|checking|vault)/i.test(r.desc);
     out.push([r.date, r.desc || r.type, a, sec.account, a > 0 || own ? 'Ignore' : '']);
   });
   return out;
