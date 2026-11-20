@@ -618,7 +618,7 @@ function parseDiscover(lines) {
     let y = close.getFullYear(); if (new Date(y, +m[1] - 1, +m[2]) > close) y--;
     const desc = firstCol(m[3]).replace(/\s+(Restaurants|Travel\/Entertainment|Merchandise|Services|Gasoline|Supermarkets|Home Improvement|Department Stores|Warehouse Clubs|Drug Stores|Education|Medical Services|Government Services|Automotive|Payments and Credits)$/i, '');
     const amt = -moneyNum(m[4]);          // Discover lists purchases as positive; spending is negative here
-    const cat = amt > 0 && /PAYMENT|CASHBACK BONUS REDEMPTION/i.test(desc) ? 'Ignore' : '';
+    const cat = amt > 0 && /PAYMENT|PYMT|CASHBACK BONUS REDEMPTION/i.test(desc) ? 'Ignore' : '';
     out.push([`${y}-${m[1]}-${m[2]}`, desc, amt, 'Capital One (Discover)', cat]);
   }
   return out;
