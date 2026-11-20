@@ -88,6 +88,14 @@
   .sub:last-child { border-bottom:0; }
   .sub .grow b { display:block; }
   .changed { color:var(--warn); font-weight:600; }
+  .ins { border-left:4px solid var(--line); }
+  .ins h3 { margin:0 0 6px; font-size:16px; }
+  .ins p { margin:0; font-size:15px; }
+  .ins .tag { font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.04em; }
+  .ins.save { border-left-color:var(--over); } .ins.save .tag { color:var(--over); }
+  .ins.watch { border-left-color:var(--warn); } .ins.watch .tag { color:var(--warn); }
+  .ins.good { border-left-color:var(--accent); } .ins.good .tag { color:var(--accent); }
+  .ins.info .tag { color:var(--muted); }
 </style>
 </head>
 <body>
@@ -105,6 +113,7 @@
   <section id="app" class="hidden">
     <nav id="tabs">
       <button data-tab="overview" class="on">Overview</button>
+      <button data-tab="insights">Insights</button>
       <button data-tab="trends">Trends</button>
       <button data-tab="subs">Recurring</button>
       <button data-tab="import">Import</button>
@@ -127,6 +136,16 @@
       </div>
       <div class="stack" id="l-stack"></div>
       <div class="card" id="cats"></div>
+    </div>
+
+    <!-- Insights (written by Claude from your data) -->
+    <div id="tab-insights" class="hidden">
+      <div class="row" style="margin-bottom:12px; justify-content:space-between">
+        <select id="ins-period"></select>
+        <span class="muted" id="ins-total"></span>
+      </div>
+      <div id="ins-list"></div>
+      <p class="muted">Written by Claude from your transactions. For a fresh set, ask Claude: "update my budget insights".</p>
     </div>
 
     <!-- Trends -->
@@ -294,8 +313,8 @@ sb.auth.getSession().then(({ data }) => { if (!data.session) $('auth').classList
 $('tabs').querySelectorAll('button').forEach(b => b.onclick = () => showTab(b.dataset.tab));
 function showTab(tab) {
   $('tabs').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
-  for (const t of ['overview','trends','subs','import','txns','settings']) $('tab-' + t).classList.toggle('hidden', t !== tab);
-  ({ overview: renderOverview, trends: renderTrends, subs: renderSubs, import: renderImport, txns: renderTxns, settings: renderSettings })[tab]();
+  for (const t of ['overview','insights','trends','subs','import','txns','settings']) $('tab-' + t).classList.toggle('hidden', t !== tab);
+  ({ overview: renderOverview, insights: renderInsights, trends: renderTrends, subs: renderSubs, import: renderImport, txns: renderTxns, settings: renderSettings })[tab]();
 }
 
 // ───────── Data ─────────
@@ -392,6 +411,25 @@ function renderOverview() {
       ${r.p != null ? `<div class="bar ${over ? 'over' : ''}"><div style="width:${pct}%"></div></div>` : ''}
     </div>`;
   }).join('');
+}
+
+// ───────── Insights ─────────
+let insights = null;
+const TONE = { save: 'Money to save', watch: 'Worth watching', good: 'Going well', info: 'Good to know' };
+$('ins-period').onchange = () => renderInsights();
+async function renderInsights() {
+  if (!insights) {
+    const { data, error } = await sb.from('budget_insights').select('*').order('period', { ascending: false }).order('sort');
+    if (error) { $('ins-list').innerHTML = `<p class="muted">${esc(error.message)}</p>`; return; }
+    insights = data;
+    const periods = [...new Set(data.map(i => i.period))];
+    $('ins-period').innerHTML = periods.map(p => `<option value="${p}">${monthLabel(p, true)}</option>`).join('');
+  }
+  const p = $('ins-period').value, list = insights.filter(i => i.period === p);
+  if (!list.length) { $('ins-list').innerHTML = '<p class="muted">No insights yet. Ask Claude to analyze your budget.</p>'; $('ins-total').textContent = ''; return; }
+  const save = list.filter(i => i.tone === 'save' && i.monthly_impact).reduce((a, i) => a + +i.monthly_impact, 0);
+  $('ins-total').textContent = save ? `${money(save)}/mo you could save` : '';
+  $('ins-list').innerHTML = list.map(i => `<div class="card ins ${i.tone}"><span class="tag">${TONE[i.tone] || ''}${i.monthly_impact ? ` · ${money(+i.monthly_impact)}/mo` : ''}</span><h3>${esc(i.title)}</h3><p>${esc(i.body)}</p></div>`).join('');
 }
 
 // ───────── Trends ─────────
